@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: video_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - video_encoding
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  # frontend:
+  #   build:
+  #     context: .
+  #     dockerfile: ./compose/frontend/Dockerfile
+  #   ports:
+  #     - "5173:8080"  #0Expose the Vite default port
+  #   networks:
+  #     - video_encoding
+  fastapi:
+    build:
+      context: .
+      dockerfile: ./compose/fastapi/Dockerfile
+    container_name: video_fastapi
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started  # Ensure Redis is up before starting FastAPI
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}  # Use the service name 'redis' for Docker containers
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./fastapi/app:/app
+    networks:
+      - video_encoding
+
+  redis:
+    image: redis:7.4  # Use the official Redis image
+    container_name: video_redis
+    restart: always
+    ports:
+      - "6379:6379"  # Expose Redis port
+    networks:
+      - video_encoding
+
+volumes:
+  mysql_data:
+
+networks:
+  video_encoding:
+    driver: bridge
