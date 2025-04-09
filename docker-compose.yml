@@ -22,14 +22,6 @@ services:
       retries: 5
       start_period: 10s
 
-  frontend:
-    build:
-      context: .
-      dockerfile: ./compose/frontend/Dockerfile
-    ports:
-      - "5173:8080"  #0Expose the Vite default port
-    networks:
-      - video_encoding
   fastapi:
     build:
       context: .
@@ -38,26 +30,27 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
-        condition: service_started  # Ensure Redis is up before starting FastAPI
+      dragonfly:
+        condition: service_started
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}  # Use the service name 'redis' for Docker containers
+      DRAGONFLY_URL: ${DRAGONFLY_URL}
     ports:
       - "8000:8000"
     volumes:
       - ./fastapi/app:/app
     networks:
       - video_encoding
-
-  redis:
-    image: redis:7.4  # Use the official Redis image
-    container_name: video_redis
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: video_dragonfly
     restart: always
     ports:
-      - "6379:6379"  # Expose Redis port
+      - "6379:6379"  # Default Redis-compatible port
     networks:
       - video_encoding
+    command: ["dragonfly", "--port", "6379"]
+
 
 volumes:
   mysql_data:

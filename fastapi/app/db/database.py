@@ -10,7 +10,7 @@ load_dotenv()
 
 # Fetch URLs from environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
-REDIS_URL = os.getenv("REDIS_URL")
+REDIS_URL = os.getenv("DRAGONFLY_URL")
 
 
 engine = create_engine(DATABASE_URL)
