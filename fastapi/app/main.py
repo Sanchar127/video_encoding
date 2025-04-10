@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from db.database import Base, engine
 from routes import user as user_routes
+from routes.encoding import router as encoding_routes
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()  # ✅ Define app first!
@@ -16,6 +17,8 @@ app.add_middleware(
 
 # ✅ Include your routers
 app.include_router(user_routes.router)
+app.include_router(encoding_routes, prefix="/encoding")
+
 
 # ✅ Create DB tables
 Base.metadata.create_all(bind=engine)

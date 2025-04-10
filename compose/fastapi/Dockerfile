@@ -1,11 +1,7 @@
 FROM python:3.9-slim
 
 # Install system dependencies required for mysqlclient
-RUN apt-get update && apt-get install -y \
-    default-libmysqlclient-dev \
-    build-essential \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ffmpeg
 
 # Set work directory
 WORKDIR /app

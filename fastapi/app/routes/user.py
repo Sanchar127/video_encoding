@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import uuid4
-
+from fastapi import Query
 from schemas.user import UserCreate, UserOut
 from models.user import User
 from utils.security import hash_password
@@ -29,10 +29,9 @@ def get_db():
         db.close()
 
 
-# Get the currently logged-in user and validate token
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     # Check if the token is blacklisted
-    if redis_client.sismember("blacklisted_tokens", token):
+    if redis_client.exists(f"blacklisted:{token}"):
         raise HTTPException(status_code=401, detail="Token has been blacklisted")
 
     user_id = redis_client.get(f"token:{token}")
@@ -54,8 +53,6 @@ def get_admin_user(current_user: User = Depends(get_current_user)):
 
 
 
-# AUTH: Login
-
 @router.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
@@ -64,13 +61,27 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user.is_activated:
         raise HTTPException(status_code=403, detail="User is deactivated")
 
-    access_token = str(uuid4())
-    refresh_token = str(uuid4())
+    existing_tokens = redis_client.smembers(f"user_tokens:{user.unique_id}")
 
-    store_token(access_token, user.unique_id)
+    valid_access_token = None
+    for token in existing_tokens:
+        token_str = token.decode() if isinstance(token, bytes) else token
+        # Check if token is blacklisted before assigning it as valid
+        if redis_client.exists(f"blacklisted:{token_str}"):
+            continue  # Skip blacklisted tokens
+        if redis_client.exists(f"token:{token_str}"):
+            valid_access_token = token_str
+            break
+
+    if valid_access_token:
+        access_token = valid_access_token
+    else:
+        access_token = str(uuid4())
+        store_token(access_token, user.unique_id)
+
+    refresh_token = str(uuid4())
     store_token(refresh_token, user.unique_id, is_refresh=True)
 
-    # Optionally set refresh token as a secure HttpOnly cookie
     response = JSONResponse(content={
         "access_token": access_token,
         "token_type": "bearer"
@@ -105,8 +116,8 @@ def create_user(user_data: UserCreate, db: Session = Depends(get_db), current_us
     if user_data.role == "super_admin":
         raise HTTPException(status_code=403, detail="Cannot create super admin")
 
-    if user_data.role == "admin" and current_user.role != "super_admin":
-        raise HTTPException(status_code=403, detail="Only super admins can create admins")
+    if user_data.role == "admin" and current_user.role == "user":
+        raise HTTPException(status_code=403, detail="Only admin and super admins can create admins")
 
     new_user = User(
         name=user_data.name,
@@ -177,41 +188,70 @@ def update_user(user_id: str, user_data: UserCreate, db: Session = Depends(get_d
 
 
 
-# @router.post("/users/blacklist-token/{user_id}")
-# def Blacklist_User_token(user_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-#     user = db.query(User).filter(User.unique_id == user_id).first()
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
+@router.post("/users/blacklist-token/{user_id}")
+def blacklist_user_token(
+    user_id: str,
+    duration_minutes: int = Query(None, description="Duration in minutes to blacklist the token"),
+    current_user: User = Depends(get_admin_user)
+):
+    # Step 1: Fetch tokens from Redis
+    tokens = redis_client.smembers(f"user_tokens:{user_id}")
 
-#     if user.role == "super_admin" and current_user.role != "super_admin":
-#         raise HTTPException(status_code=403, detail="Cannot  admin")
+    # Step 2: If no tokens found, raise 404
+    if not tokens:
+        raise HTTPException(status_code=404, detail="No tokens found in Redis for this user")
 
-#     if current_user.role == "admin" and user_id != current_user.unique_id:
-#         raise HTTPException(status_code=403, detail="Admins can only revoke their own token")
+    # Step 3: Role-based restrictions
+    if current_user.role == "admin" and user_id != current_user.unique_id:
+        raise HTTPException(status_code=403, detail="Admins can only revoke their own token")
 
-#     tokens = redis_client.smembers(f"user_tokens:{user_id}")
-#     for token in tokens:
-#         token_str = token.decode() if isinstance(token, bytes) else token
-#         redis_client.sadd("blacklisted_tokens", token_str)
-#         # Optional: delete the token reference too
-#         redis_client.delete(f"token:{token_str}")
+# Step 4: Blacklist tokens
+    for token in tokens:
+        token_str = token.decode() if isinstance(token, bytes) else token
+        redis_client.set(f"blacklisted:{token_str}", "1", ex=duration_minutes * 60 if duration_minutes else None)
+        redis_client.sadd("blacklisted_tokens", token_str)  
+        redis_client.set(f"token:{token_str}", user_id)      
 
-#     user.is_activated = False
-#     db.commit()
+       
 
-#     return {"message": f"Tokens for user {user_id} have been blacklisted and user deactivated"}
+    return {
+        "message": f"Tokens for user {user_id} have been blacklisted",
+        "duration_minutes": duration_minutes if duration_minutes else "permanently"
+    }
 
-# @router.get("/blacklisted-tokens/details")
-# def get_blacklisted_token_details():
-#     tokens = redis_client.smembers("blacklisted_tokens")
-#     details = []
-#     for token in tokens:
-#         token_str = token  # no decode needed
-#         user_id = redis_client.get(f"token:{token_str}")
-#         if user_id:
-#             user_id = user_id.decode() if isinstance(user_id, bytes) else user_id
-#         details.append({"token": token_str, "user_id": user_id})
-#     return {"blacklisted_tokens": details}
+
+
+@router.get("/blacklisted-tokens/details")
+def get_blacklisted_token_details():
+    tokens = redis_client.smembers("blacklisted_tokens")
+    details = []
+    for token in tokens:
+        token_str = token.decode() if isinstance(token, bytes) else token
+
+      
+        user_id = redis_client.get(f"token:{token_str}")
+        if user_id:
+            user_id = user_id.decode() if isinstance(user_id, bytes) else user_id
+
+        
+        ttl_seconds = redis_client.ttl(f"blacklisted:{token_str}")
+
+      
+        if ttl_seconds == -1:
+            duration = "permanent"
+        elif ttl_seconds == -2:
+            duration = "expired"
+        else:
+            duration = f"{ttl_seconds // 60} minutes"
+
+        details.append({
+            "token": token_str,
+            "user_id": user_id,
+            "remaining_duration": duration
+        })
+
+    return {"blacklisted_tokens": details}
+
 @router.get("/tokens/stored")
 def get_all_stored_tokens():
     keys = redis_client.keys("token:*")
@@ -223,5 +263,6 @@ def get_all_stored_tokens():
             user_id = user_id.decode() if isinstance(user_id, bytes) else user_id
         tokens.append({"token": token, "user_id": user_id})
     return {"stored_tokens": tokens}
+
 
 

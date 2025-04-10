@@ -16,7 +16,7 @@ def store_token(token: str, user_id: str, is_refresh=False):
         expiration_time = timedelta(days=7)
         redis_key = f"refresh_token:{token}"
     else:
-        expiration_time = timedelta(minutes=1)
+        expiration_time = timedelta(minutes=15)
         redis_key = f"token:{token}"
     
     redis_client.set(redis_key, user_id, ex=expiration_time)
