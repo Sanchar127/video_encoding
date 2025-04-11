@@ -19,3 +19,11 @@ Base = declarative_base()
 
 # Set up Redis client
 redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+# Dependency to get the database session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

@@ -1,8 +1,10 @@
 from logging.config import fileConfig
+# add this import at the top
+from db.database import Base  # Adjust based on your structure
+from models import encodeprofile,user,videojob  # So all models are registered
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-from models.user import Base  # or wherever your Base is defined
 
 from alembic import context
 
@@ -19,6 +21,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
+# target_metadata = None
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
